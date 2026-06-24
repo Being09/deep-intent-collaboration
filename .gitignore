@@ -1,0 +1,10 @@
+# 技能工作产物（非技能本体内容，不提交到远程仓库）
+
+# brainstorming / writing-skills 产出的设计稿、实现计划等
+docs/
+
+# 跨会话经验记忆层运行时产物（本地经验条目、指针、摘要文档）
+.experience-log/
+
+# 测试沙箱（writing-skills 压力测试用）
+test-sandbox/
