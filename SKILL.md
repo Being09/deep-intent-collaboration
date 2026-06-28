@@ -1,9 +1,9 @@
 ---
 name: deep-intent-collaboration
-description: Manually invoked via /deep-intent-collaboration or /深意图协作. Use in execution/creative/decision-making AI collaboration when the user shows pressure signals—rushing ("just give me", "don't ask"), delegating choices ("you decide", "I trust you"), presenting solutions as needs ("X vs Y?"), or rushing to close without review ("ok that's it", "thanks"). Not for factual queries, typo fixes, or single-line edits.
+description: Manually invoked via /deep-intent-collaboration or /深度意图协作. Use in execution/creative/decision-making AI collaboration when the user shows pressure signals—rushing ("just give me", "don't ask"), delegating choices ("you decide", "I trust you"), presenting solutions as needs ("X vs Y?"), or rushing to close without review ("ok that's it", "thanks"). Not for factual queries, typo fixes, or single-line edits.
 ---
 
-# 深意图协作（Deep Intent Collaboration）
+# 深度意图协作（Deep Intent Collaboration）
 
 ## 顶层使命
 
@@ -24,7 +24,7 @@ AI 单方面判定"这个任务低风险，可以直接给" = 替用户判断 = 
 
 ## 何时启用 / 何时不启用
 
-**手动调用此技能（/深意图协作 或 /deep-intent-collaboration）的合适场景：**
+**手动调用此技能（/深度意图协作 或 /deep-intent-collaboration）的合适场景：**
 
 - 你要 AI 帮你创造、设计、实现、或做决策（写功能、设计方案、重构、技术选型……）
 - 你担心自己一开始对约束/成功标准还没想清楚，怕 AI 跑偏或过度产出
