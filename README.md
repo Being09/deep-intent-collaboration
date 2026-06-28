@@ -82,18 +82,19 @@ Skill 不替你决策，而是引导协作走完三个阶段：
 ### 方式一：npx 安装（推荐）
 
 ```bash
-# 国际源
+# 国际源（GitHub）
 npx skills add Being09/deep-intent-collaboration
 
-# 国内源
-npx skills-cn add Being09/deep-intent-collaboration
+# 国内源（Gitee，访问更快）
+npx skills add https://gitee.com/being09/deep-intent-collaboration.git
 ```
 
 ### 方式二：手动安装
 
 ```bash
-# 1. 克隆仓库
+# 1. 克隆仓库（国内推荐用 Gitee 源）
 git clone https://github.com/Being09/deep-intent-collaboration.git
+# 或：git clone https://gitee.com/being09/deep-intent-collaboration.git
 
 # 2. 复制到对应 Agent 的 Skills 目录
 #    OpenCode:    ~/.config/opencode/skills/
