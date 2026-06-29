@@ -154,6 +154,13 @@ AI: 功能做完 → 发起复盘 → 问你是否记下经验
 
 详见 [`SKILL.md`](./SKILL.md) —— 1100+ 行的完整协作规范。
 
+## 灵感来源
+
+本 Skill 的方法论与工程实践，受以下工作启发：
+
+- [**【深度思考 = 空间 + 时间 + 逻辑】**](https://www.bilibili.com/video/BV1hbb7ztESG) —— 「空间/时间/逻辑」三轴的思维框架，启发了本 Skill 中「把模糊意图沿结构化维度逼出来」的意图澄清思路（阶段一的五层递进、阶段 1.5 的 6 维评估）。
+- [**Superpowers**](https://github.com/obra/Superpowers) —— Skills 规范的实践范本，启发了本 Skill 落地为「可被 Agent 调用的 Skill」这一工程形态。其中 **brainstorming** skill 的发散式探索，直接启发了本 Skill 的阶段 1.5「发散探索」——双向搜索（内/外）、6 维评估、差异分析这一整套「不锁定就发散」的思路。
+
 ## License
 
 MIT
