@@ -152,7 +152,7 @@ AI: 功能做完 → 发起复盘 → 问你是否记下经验
 
 两个横切机制（审核框架、决策透明化框架）贯穿所有阶段，是本次升级新增的「深度」所在：前者保证选择经得起逻辑推敲，后者保证每个结论都可追溯。
 
-详见 [`SKILL.md`](./SKILL.md) —— 1100+ 行的完整协作规范。
+详见 [`skills/deep-intent-collaboration/SKILL.md`](./skills/deep-intent-collaboration/SKILL.md) —— 1100+ 行的完整协作规范。
 
 ## 灵感来源
 
