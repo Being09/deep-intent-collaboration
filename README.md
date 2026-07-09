@@ -160,6 +160,18 @@ AI: 功能做完 → 发起复盘 → 问你是否记下经验
 
 - [**【深度思考 = 空间 + 时间 + 逻辑】**](https://www.bilibili.com/video/BV1hbb7ztESG) —— 「空间/时间/逻辑」三轴的思维框架，启发了本 Skill 中「把模糊意图沿结构化维度逼出来」的意图澄清思路（阶段一的五层递进、阶段 1.5 的 6 维评估）。
 - [**Superpowers**](https://github.com/obra/Superpowers) —— Skills 规范的实践范本，启发了本 Skill 落地为「可被 Agent 调用的 Skill」这一工程形态。其中 **brainstorming** skill 的发散式探索，直接启发了本 Skill 的阶段 1.5「发散探索」——双向搜索（内/外）、6 维评估、差异分析这一整套「不锁定就发散」的思路。
+- [**乔哈里视窗（Johari Window）**](https://en.wikipedia.org/wiki/Johari_window)（Joseph Luft & Harry Ingham, 1955） —— 认知心理学经典模型，用「自己知不知道 × 他人知不知道」划分四个象限。启发了本 Skill 阶段一规则 2「先探测认知坐标再选策略」：AI 在澄清意图时先判断用户对某领域处于哪个象限（已知的已知 / 已知的未知 / 未知的已知 / 未知的未知），再选情境对比还是选项地图——尤其防止把用户的「未知的未知」误判成「已知的未知」而用错策略。
+- [**A field guide to Claude Fable: Finding your unknowns**](https://claude.com/blog/a-field-guide-to-claude-fable-finding-your-unknowns)（Anthropic 官方文章） —— 将乔哈里四象限迁移到「与 AI 协作时如何处理 unknowns」的实操指南（blind spot pass / brainstorms / interviews 等模式）。启发了本 Skill 规则 2.5「用已知解释未知时类比只是入口不是判据」——文章强调通过 AI 主动帮用户发现盲区，与本 Skill「AI 主动发起、增强人」的使命一致。
+
+## 赞赏
+
+如果这个 Skill 对你有帮助，可以随喜赞赏 ☕
+
+<a href="https://ifdian.net/a/being-game">
+  <img src="https://raw.githubusercontent.com/Being09/image-bed/master/afdian-彼的游戏时光.jpg" alt="爱发电赞赏" width="220">
+</a>
+
+如果图片加载不出来，可直接访问：[爱发电主页](https://ifdian.net/a/being-game)
 
 ## License
 
