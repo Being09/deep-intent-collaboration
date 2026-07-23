@@ -11,8 +11,9 @@
 //   - 非叶节点状态、current 指针,全部由工具按规则实时派生,不由 AI 维护
 //   - AI 只负责语义判断:识别问题、判父子/顺序、判叶子解没解。结构体力活全由工具兜
 //
-// 用法:node explore-tree.js <cmd> [args]
-//   数据落点:<cwd>/.deep-intent-collaboration/explore-tree/tree.json
+// 用法:node explore-tree.js <cmd> [args] --session <会话id> [--title "..."]
+//   数据落点:<cwd>/.deep-intent-collaboration/explore-tree/explore-tree-<会话id>-<标题>.json
+//   会话级:每个会话一棵树,按会话命名;定位只靠 --session(标题仅人类可读)
 
 const fs = require('fs');
 const path = require('path');
@@ -24,32 +25,42 @@ const path = require('path');
 const CWD = process.cwd();
 const TOP_DIR = path.join(CWD, '.deep-intent-collaboration');
 const EXPLORE_DIR = path.join(TOP_DIR, 'explore-tree');
-const TREE_FILE = path.join(EXPLORE_DIR, 'tree.json');
 
 const EXPERIENCE_DIR = path.join(TOP_DIR, 'experience-log');
 const LEGACY_EXPERIENCE_DIR = path.join(CWD, '.experience-log');
+
+// 旧版单一文件(迁移用);新会话不再使用
+const LEGACY_TREE_FILE = path.join(EXPLORE_DIR, 'tree.json');
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function treeExists() {
-  return fs.existsSync(TREE_FILE);
+// ────────────────────────────────────────────────────────────────
+// 会话级文件命名
+// ────────────────────────────────────────────────────────────────
+// 探索树是会话级的,每个会话一棵树,文件按会话命名避免互相覆盖。
+// 文件名:explore-tree-<sessionId>-<slug>.json(slug=标题安全化,仅人类可读)
+// 定位**只靠 --session**(标题变了不影响定位):按前缀 glob 命中已存在文件。
+// 子进程无法可靠自动检测当前会话,故 --session 必须由调用方(AI)显式传入。
+
+function treeExists(treeFile) {
+  return fs.existsSync(treeFile);
 }
 
-function loadTree() {
-  if (!treeExists()) return null;
+function loadTree(treeFile) {
+  if (!treeExists(treeFile)) return null;
   try {
-    return JSON.parse(fs.readFileSync(TREE_FILE, 'utf8'));
+    return JSON.parse(fs.readFileSync(treeFile, 'utf8'));
   } catch (e) {
-    fail(`探索树文件损坏,无法解析:${TREE_FILE}\n${e.message}`);
+    fail(`探索树文件损坏,无法解析:${treeFile}\n${e.message}`);
   }
 }
 
-function saveTree(tree) {
+function saveTree(treeFile, tree) {
   ensureDir(EXPLORE_DIR);
   tree.updated_at = nowISO();
-  fs.writeFileSync(TREE_FILE, JSON.stringify(tree, null, 2), 'utf8');
+  fs.writeFileSync(treeFile, JSON.stringify(tree, null, 2), 'utf8');
 }
 
 function newTree() {
@@ -61,6 +72,108 @@ function newTree() {
     focus: null,
     nodes: {},
   };
+}
+
+// 文件名安全化:空格转 -、删非法字符、合并连续 -、截断。
+// 中文保留(文件系统支持);仅做"能当文件名"的最小处理,不做语义转换。
+function slugify(title) {
+  let s = String(title || '').trim();
+  if (!s) return '';
+  s = s.replace(/\s+/g, '-'); // 空白 → -
+  s = s.replace(/[\/\\:\*\?"<>\|]/g, ''); // 删文件名非法字符
+  s = s.replace(/-{2,}/g, '-'); // 合并连续 -
+  s = s.replace(/^-+|-+$/g, ''); // 去首尾 -
+  if (s.length > 40) s = s.slice(0, 40).replace(/-+$/, ''); // 截断 + 去尾 -
+  return s;
+}
+
+// 把 sessionId 构造成文件名里的 id 段(sess_xxx 原样;裸 id 也原样)。
+function sessionFileStem(sessionId) {
+  return String(sessionId || '').trim();
+}
+
+// 在 EXPLORE_DIR 里按前缀找该 session 已存在的树文件(定位只靠 session)。
+// 命中:explore-tree-<session>.json 或 explore-tree-<session>-*.json
+function findExistingTreeFile(sessionId) {
+  if (!fs.existsSync(EXPLORE_DIR)) return null;
+  const stem = sessionFileStem(sessionId);
+  if (!stem) return null;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(EXPLORE_DIR);
+  } catch (e) {
+    return null;
+  }
+  // 精确无标题名优先,其次任意标题名
+  const exact = `explore-tree-${stem}.json`;
+  if (entries.includes(exact)) return path.join(EXPLORE_DIR, exact);
+  const prefix = `explore-tree-${stem}-`;
+  const hit = entries.find((n) => n.startsWith(prefix) && n.endsWith('.json'));
+  return hit ? path.join(EXPLORE_DIR, hit) : null;
+}
+
+// 查 ZCode SQLite 取会话标题(只读,失败静默返回 null)。
+// 无 --title 时用于首次命名;DB 不可用/查不到则退化。
+function lookupSessionTitle(sessionId) {
+  const stem = sessionFileStem(sessionId);
+  if (!stem) return null;
+  const home = process.env.USERPROFILE || process.env.HOME;
+  if (!home) return null;
+  const dbPath = path.join(home, '.zcode', 'cli', 'db', 'db.sqlite');
+  if (!fs.existsSync(dbPath)) return null;
+  // Node 22+ 内置 node:sqlite;不可用则跳过(保持零外部依赖)
+  // node:sqlite 是实验特性,require 与打开 DB 都会打 ExperimentalWarning 到 stderr。
+  // 标题查询是纯增益(查不到就退化名),不该污染输出,故全程吞 warning 后恢复。
+  const origEmitWarning = process.emitWarning;
+  let sqlite;
+  let result = null;
+  try {
+    process.emitWarning = function () {};
+    try {
+      sqlite = require('node:sqlite');
+    } catch (e) {
+      return null; // 该 Node 版本无内置 sqlite,优雅退化
+    }
+    try {
+      const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const row = db.prepare('SELECT title FROM session WHERE id = ?').get(stem);
+        result = row && row.title ? row.title : null;
+      } finally {
+        db.close();
+      }
+    } catch (e) {
+      result = null; // 表不存在/锁定/损坏 → 退化,不阻塞
+    }
+  } finally {
+    process.emitWarning = origEmitWarning;
+  }
+  return result;
+}
+
+// 解析 --session → 树文件路径(定位只靠 session;标题仅用于首次命名)。
+// existingOk:若该 session 文件已存在则复用;creating 时若不存在按规则命名新文件。
+function resolveTreeFile(flags, { creating } = {}) {
+  if (!flags || !flags.session) {
+    fail(
+      '缺少 --session <会话id>。探索树是会话级的,每次调用必须带 --session\n' +
+        '(会话 id 形如 sess_xxx,AI 从自身会话上下文取)。运行 help 查看用法。'
+    );
+  }
+  const sessionId = sessionFileStem(flags.session);
+  if (!sessionId) fail('--session 不能为空');
+
+  // 1. 已存在 → 复用(标题已固化在文件名,后续调用零 --title)
+  const existing = findExistingTreeFile(sessionId);
+  if (existing) return existing;
+
+  // 2. 不存在 → 构造新名。标题来源优先级:--title > DB 查询 > 无标题退化
+  let title = flags.title || lookupSessionTitle(sessionId) || '';
+  const slug = slugify(title);
+  const name = slug
+    ? `explore-tree-${sessionId}-${slug}.json`
+    : `explore-tree-${sessionId}.json`;
+  return path.join(EXPLORE_DIR, name);
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -208,15 +321,34 @@ function setNext(tree, fromId, toId) {
 // 命令实现
 // ────────────────────────────────────────────────────────────────
 
-function cmdInit() {
+function cmdInit(flags) {
   ensureMigration(); // 顺便幂等迁移
-  if (treeExists()) {
-    out('探索树已存在:' + TREE_FILE);
+  const treeFile = resolveTreeFile(flags, { creating: true });
+  if (treeExists(treeFile)) {
+    out('探索树已存在:' + treeFile);
     return;
   }
   const tree = newTree();
-  saveTree(tree);
-  out('已创建空探索树:' + TREE_FILE);
+  saveTree(treeFile, tree);
+  out('已创建空探索树:' + treeFile);
+}
+
+function cmdAdopt(flags) {
+  ensureMigration();
+  if (!flags || !flags.session) {
+    fail('用法:adopt --session <会话id> [--title "..."]\n把旧 tree.json 迁到会话命名文件(幂等)');
+  }
+  if (!fs.existsSync(LEGACY_TREE_FILE)) {
+    fail('旧 tree.json 不存在:' + LEGACY_TREE_FILE + '\n无需 adopt(或已迁过)');
+  }
+  const target = resolveTreeFile(flags, { creating: true });
+  if (treeExists(target)) {
+    out('目标会话树已存在,跳过(如需覆盖请先删):' + target);
+    return;
+  }
+  ensureDir(EXPLORE_DIR);
+  fs.renameSync(LEGACY_TREE_FILE, target);
+  out('已迁移旧 tree.json → ' + target);
 }
 
 function cmdMigrate() {
@@ -274,8 +406,9 @@ function ensureMigration(verbose) {
 
 function cmdAdd(args, flags) {
   ensureMigration();
-  const tree = treeExists() ? loadTree() : newTree();
-  if (args.length === 0) fail('用法:add <问题> [--type T] [--parent ID] [--after ID] [--options "A|B|C"]');
+  const treeFile = resolveTreeFile(flags, { creating: true });
+  const tree = treeExists(treeFile) ? loadTree(treeFile) : newTree();
+  if (args.length === 0) fail('用法:add <问题> [--type T] [--parent ID] [--after ID] [--options "A|B|C"] --session <id>');
 
   const question = args.join(' ').trim();
   if (!question) fail('问题不能为空');
@@ -313,14 +446,15 @@ function cmdAdd(args, flags) {
     tree.roots.push(id);
   }
 
-  saveTree(tree);
+  saveTree(treeFile, tree);
   out(`已添加节点 ${id}: ${question}` + (flags.parent ? ` (父: ${flags.parent})` : flags.after ? ` (顺序接: ${flags.after})` : ' (根)'));
 }
 
 function cmdDone(args, flags) {
-  const tree = loadTree();
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) fail('探索树不存在,先 add 创建');
-  if (args.length === 0) fail('用法:done <id> [--choice "X"]');
+  if (args.length === 0) fail('用法:done <id> [--choice "X"] --session <id>');
   const id = args[0];
   const node = getNode(tree, id);
 
@@ -331,14 +465,15 @@ function cmdDone(args, flags) {
   node.status = 'solved';
   if (flags.choice) node.resolved_choice = flags.choice;
 
-  saveTree(tree);
+  saveTree(treeFile, tree);
   out(`✓ ${id}: ${node.question} → solved` + (flags.choice ? ` (选: ${flags.choice})` : ''));
 }
 
 function cmdAbandon(args, flags) {
-  const tree = loadTree();
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) fail('探索树不存在,先 add 创建');
-  if (args.length === 0) fail('用法:abandon <id> [--reason "..."]');
+  if (args.length === 0) fail('用法:abandon <id> [--reason "..."] --session <id>');
   const id = args[0];
   const node = getNode(tree, id);
   const reason = flags.reason || '';
@@ -362,20 +497,21 @@ function cmdAbandon(args, flags) {
   // 若 abandon 的恰好是 focus,清掉 focus 让 DFS 重算
   if (tree.focus === id) tree.focus = null;
 
-  saveTree(tree);
+  saveTree(treeFile, tree);
   out(`✗ ${id}: ${node.question} → abandoned` + (reason ? ` (${reason})` : ''));
 }
 
 function cmdNote(args, flags) {
-  const tree = loadTree();
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) fail('探索树不存在,先 add 创建');
-  if (args.length < 2) fail('用法:note <id> <text>');
+  if (args.length < 2) fail('用法:note <id> <text> --session <id>');
   const id = args[0];
   const text = args.slice(1).join(' ').trim();
   if (!text) fail('备注内容不能为空');
   const node = getNode(tree, id);
   node.note = node.note ? node.note + '\n' + text : text;
-  saveTree(tree);
+  saveTree(treeFile, tree);
   out(`已给 ${id} 添加备注`);
 }
 
@@ -394,7 +530,8 @@ const UPDATE_ALLOWED_FIELDS = ['question', 'type', 'resolved_choice', 'options',
 const UPDATE_REJECTED_FIELDS = ['id', 'parent', 'childs', 'next', 'created_at', 'status', 'updated_at'];
 
 function cmdUpdate(args, flags) {
-  const tree = loadTree();
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) fail('探索树不存在,先 add 创建');
 
   let patchRaw;
@@ -463,14 +600,15 @@ function cmdUpdate(args, flags) {
     out('patch 为空,未做任何修改');
     return;
   }
-  saveTree(tree);
+  saveTree(treeFile, tree);
   out(`已更新 ${report.length} 个节点:` + report.join(' '));
 }
 
 function cmdLink(args, flags) {
-  const tree = loadTree();
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) fail('探索树不存在,先 add 创建');
-  if (args.length < 2) fail('用法:link <idA> <idB> [--kind child|next]');
+  if (args.length < 2) fail('用法:link <idA> <idB> [--kind child|next] --session <id>');
   const a = args[0];
   const b = args[1];
   const kind = flags.kind || 'child';
@@ -483,29 +621,31 @@ function cmdLink(args, flags) {
   } else {
     fail('--kind 只能是 child 或 next');
   }
-  saveTree(tree);
+  saveTree(treeFile, tree);
   out(`已建立 ${kind} 边:${a} → ${b}`);
 }
 
 function cmdFocus(args, flags) {
-  const tree = loadTree();
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) fail('探索树不存在,先 add 创建');
   if (flags.clear) {
     tree.focus = null;
-    saveTree(tree);
+    saveTree(treeFile, tree);
     out('已清空手动 focus,恢复 DFS 自动定位 current');
     return;
   }
-  if (args.length === 0) fail('用法:focus <id> | focus --clear');
+  if (args.length === 0) fail('用法:focus <id> | focus --clear --session <id>');
   const id = args[0];
   getNode(tree, id); // 校验存在
   tree.focus = id;
-  saveTree(tree);
+  saveTree(treeFile, tree);
   out(`已手动钉住 current = ${id}(DFS 自动定位将被覆盖,用 focus --clear 恢复)`);
 }
 
-function cmdStatus() {
-  const tree = loadTree();
+function cmdStatus(flags) {
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) {
     out('探索树尚未创建');
     return;
@@ -753,7 +893,8 @@ function renderCurrent(tree) {
 }
 
 function cmdShow(args, flags) {
-  const tree = loadTree();
+  const treeFile = resolveTreeFile(flags);
+  const tree = loadTree(treeFile);
   if (!tree) {
     out('探索树尚未创建');
     return;
@@ -805,34 +946,45 @@ function usage() {
   out(`
 探索树(explore-tree)— 会话级探索追踪工具
 
-用法:node explore-tree.js <cmd> [args]
+用法:node explore-tree.js <cmd> [args] --session <会话id> [--title "..."]
+
+⚠ 会话级文件:每会话一棵树,文件名 explore-tree-<会话id>-<标题>.json。
+  除 migrate/adopt 外,所有命令必须带 --session(会话 id 形如 sess_xxx,
+  由调用方从会话上下文取)。--title 仅首次命名用(可省略,自动从 ZCode 取/退化);
+  定位只靠 --session,标题变了不影响定位,后续调用零 --title。
 
 命令:
-  init                          建空探索树(首次 add 会自动创建)
-  migrate                       幂等迁移旧 .experience-log/ → .deep-intent-collaboration/experience-log/
+  init --session <id> [--title "..."]   建空探索树(首次 add 会自动创建)
+  adopt --session <id> [--title "..."]  把旧 tree.json 迁到会话命名文件(幂等)
+  migrate                               幂等迁移旧 .experience-log/ → .deep-intent-collaboration/experience-log/
 
-  add <问题> [--type T] [--parent ID] [--after ID] [--options "A|B|C"]
-                                添加节点
+  add <问题> [--type T] [--parent ID] [--after ID] [--options "A|B|C"] --session <id>
+                                添加节点(树不存在则自动建,此时可带 --title 命名)
                                 --parent ID  作为 ID 的子节点(childs 边,同级)
                                 --after ID   顺序接在 ID 之后(next 边,顺序)
                                 无 parent/after → 作为新根
-  done <id> [--choice "X"]      标记叶节点已解决(自动重算状态 + 推进 current)
-  abandon <id> [--reason "..."] 标记死路(留痕;非叶子则整子树标记)
-  note <id> <text>              给节点附备注/结论/放弃理由
-  update '<JSON>' | --file <path>
+  done <id> [--choice "X"] --session <id>
+                                标记叶节点已解决(自动重算状态 + 推进 current)
+  abandon <id> [--reason "..."] --session <id>
+                                标记死路(留痕;非叶子则整子树标记)
+  note <id> <text> --session <id>
+                                给节点附备注/结论/放弃理由
+  update '<JSON>' | --file <path> --session <id>
                                 批量差异化更新节点数据字段
                                 patch 形如 {"n3":{"question":"...","type":"意图"}, "n1":{"note":"..."}}
                                 只改出现在 patch 里的字段;其余保留
                                 支持字段:question / type / resolved_choice / options / note
                                 (结构与状态字段不可改——用 add/link/done/abandon)
-  link <idA> <idB> [--kind child|next]
+  link <idA> <idB> [--kind child|next] --session <id>
                                 在两已存在节点间补建边
 
-  show [current|all]            渲染树
+  show [current|all] --session <id>
+                                渲染树
                                 current(默认):祖先链 + 当前 + 子 + 兄弟,其余折叠
                                 all:全树展开(复盘/看全局)
-  status                        一行摘要:节点统计 + 当前问题
-  focus <id> | focus --clear    手动钉住/清空 current(探索替代分支时用)
+  status --session <id>         一行摘要:节点统计 + 当前问题
+  focus <id> | focus --clear --session <id>
+                                手动钉住/清空 current(探索替代分支时用)
 
 状态派生规则(三态,unsolved > solved > abandoned):
   叶子:取显式存储值(done→solved / abandon→abandoned / 否则 unsolved)
@@ -853,7 +1005,10 @@ function main() {
 
   switch (cmd) {
     case 'init':
-      cmdInit();
+      cmdInit(flags);
+      break;
+    case 'adopt':
+      cmdAdopt(flags);
       break;
     case 'migrate':
       cmdMigrate();
@@ -880,7 +1035,7 @@ function main() {
       cmdFocus(positional, flags);
       break;
     case 'status':
-      cmdStatus();
+      cmdStatus(flags);
       break;
     case 'show':
       cmdShow(positional, flags);
