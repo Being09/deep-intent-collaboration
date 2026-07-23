@@ -379,6 +379,94 @@ function cmdNote(args, flags) {
   out(`已给 ${id} 添加备注`);
 }
 
+// update —— 批量差异化更新节点的数据字段
+//
+// 入参是一份 JSON patch: { "<id>": { <field>: <value>, ... }, ... }
+// 只更新出现在 patch 里的字段,未出现的字段原样保留(差异化更新)。
+// 字段白名单:question / type / resolved_choice / options / note。
+// 结构性字段(id/parent/childs/next/created_at)与 status 一律拒绝——
+//   结构用 add/link,状态用 done/abandon,以保证状态派生不变量不被绕过。
+//
+// 两种给 patch 的方式(二选一):
+//   update '{"n3":{"question":"新问题"}, "n1":{"type":"意图"}}'
+//   update --file path/to/patch.json     (内容大 / 含换行 / shell 转义麻烦时用)
+const UPDATE_ALLOWED_FIELDS = ['question', 'type', 'resolved_choice', 'options', 'note'];
+const UPDATE_REJECTED_FIELDS = ['id', 'parent', 'childs', 'next', 'created_at', 'status', 'updated_at'];
+
+function cmdUpdate(args, flags) {
+  const tree = loadTree();
+  if (!tree) fail('探索树不存在,先 add 创建');
+
+  let patchRaw;
+  if (flags.file) {
+    if (!fs.existsSync(flags.file)) fail(`patch 文件不存在:${flags.file}`);
+    patchRaw = fs.readFileSync(flags.file, 'utf8');
+  } else {
+    if (args.length === 0) {
+      fail(
+        '用法:update \'<JSON>\'  或  update --file <path>\n' +
+          'patch 形如: {"n3":{"question":"...","type":"..."}, "n1":{"note":"..."}}'
+      );
+    }
+    patchRaw = args.join(' ').trim();
+  }
+  if (!patchRaw) fail('patch 不能为空');
+
+  let patch;
+  try {
+    patch = JSON.parse(patchRaw);
+  } catch (e) {
+    fail(`patch JSON 解析失败:${e.message}`);
+  }
+  if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
+    fail('patch 必须是对象:{ "<id>": { <field>: <value> } }');
+  }
+
+  const report = [];
+  let touched = false;
+  for (const id of Object.keys(patch)) {
+    const node = tree.nodes[id];
+    if (!node) fail(`节点不存在:${id}`);
+    const changes = patch[id];
+    if (typeof changes !== 'object' || changes === null || Array.isArray(changes)) {
+      fail(`节点 ${id} 的值必须是对象:{ <field>: <value> },收到:${JSON.stringify(changes)}`);
+    }
+
+    const applied = [];
+    for (const field of Object.keys(changes)) {
+      if (UPDATE_REJECTED_FIELDS.includes(field)) {
+        fail(
+          `字段 "${field}" 不可通过 update 修改(结构/状态字段,用 add/link/done/abandon)。\n` +
+            `update 仅支持:${UPDATE_ALLOWED_FIELDS.join(', ')}`
+        );
+      }
+      if (!UPDATE_ALLOWED_FIELDS.includes(field)) {
+        fail(`未知字段 "${field}"。update 仅支持:${UPDATE_ALLOWED_FIELDS.join(', ')}`);
+      }
+      const value = changes[field];
+      // question / type / resolved_choice / note 必须可转字符串;options 需是数组
+      if (field === 'options') {
+        if (!Array.isArray(value)) {
+          fail(`节点 ${id} 的 options 必须是数组,收到:${JSON.stringify(value)}`);
+        }
+        node.options = value;
+      } else {
+        node[field] = value === null ? '' : String(value);
+      }
+      applied.push(field);
+    }
+    touched = true;
+    report.push(`${id}{${applied.join(',')}}`);
+  }
+
+  if (!touched) {
+    out('patch 为空,未做任何修改');
+    return;
+  }
+  saveTree(tree);
+  out(`已更新 ${report.length} 个节点:` + report.join(' '));
+}
+
 function cmdLink(args, flags) {
   const tree = loadTree();
   if (!tree) fail('探索树不存在,先 add 创建');
@@ -508,14 +596,14 @@ function renderSubtree(tree, id, prefix, isLast, currentId, lines, isNextEdge) {
   lines.push(line);
 
   // 子节点(childs)
-  const childPrefix = prefix === '' ? '' : isLast ? '    ' : '│   ';
+  const childPrefix = prefix + (isLast ? '    ' : '│   ');
   const childs = node.childs || [];
   for (let i = 0; i < childs.length; i++) {
     renderSubtree(tree, childs[i], childPrefix, i === childs.length - 1, currentId, lines, false);
   }
   // next 边(顺序后继)
   if (node.next) {
-    renderSubtree(tree, node.next, childPrefix, childs.length === 0, currentId, lines, true);
+    renderSubtree(tree, node.next, childPrefix, true, currentId, lines, true);
   }
 }
 
@@ -731,6 +819,12 @@ function usage() {
   done <id> [--choice "X"]      标记叶节点已解决(自动重算状态 + 推进 current)
   abandon <id> [--reason "..."] 标记死路(留痕;非叶子则整子树标记)
   note <id> <text>              给节点附备注/结论/放弃理由
+  update '<JSON>' | --file <path>
+                                批量差异化更新节点数据字段
+                                patch 形如 {"n3":{"question":"...","type":"意图"}, "n1":{"note":"..."}}
+                                只改出现在 patch 里的字段;其余保留
+                                支持字段:question / type / resolved_choice / options / note
+                                (结构与状态字段不可改——用 add/link/done/abandon)
   link <idA> <idB> [--kind child|next]
                                 在两已存在节点间补建边
 
@@ -775,6 +869,9 @@ function main() {
       break;
     case 'note':
       cmdNote(positional, flags);
+      break;
+    case 'update':
+      cmdUpdate(positional, flags);
       break;
     case 'link':
       cmdLink(positional, flags);
