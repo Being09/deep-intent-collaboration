@@ -429,11 +429,13 @@ function cmdAdd(args, flags) {
   };
 
   if (flags.options) {
+    // --options "A|B|C" 只传 label;why/why_not/source 留空,
+    // 由后续 update 回填(分叉点的理由/来源在用户选完之后才知道)。
     node.options = String(flags.options)
       .split('|')
       .map((s) => s.trim())
       .filter(Boolean)
-      .map((label) => ({ label, notes: '' }));
+      .map((label) => ({ label, notes: '', why: '', why_not: '', source: '' }));
   }
 
   tree.nodes[id] = node;
@@ -694,9 +696,63 @@ function shorten(s, n) {
 
 function renderNodeLine(symbol, id, node, isCurrent) {
   const noteSuffix = node.note ? `  — ${shorten(node.note, 40)}` : '';
-  const choiceSuffix = node.resolved_choice ? ` [选:${shorten(node.resolved_choice, 20)}]` : '';
+  // options 非空时,选中态已在选项块用 [x] 标了,[选:X] 后缀冗余 → 省略。
+  // 无 options 的纯 label 节点仍保留后缀(向后兼容)。
+  const hasOptions = node.options && node.options.length > 0;
+  const choiceSuffix = !hasOptions && node.resolved_choice ? ` [选:${shorten(node.resolved_choice, 20)}]` : '';
   const curTag = isCurrent ? '  ← 你在这' : '';
   return `${symbol} ${id}: ${node.question}${choiceSuffix}${noteSuffix}${curTag}`;
+}
+
+// ────────────────────────────────────────────────────────────────
+// 选项渲染(展开 options 数组为多行视觉块)
+// ────────────────────────────────────────────────────────────────
+// 选项三态用 ASCII checkbox 标记(与节点四态的 Unicode 符号分工):
+//   [x] 选中(option.label === node.resolved_choice)
+//   [~] 排除(带 why_not 的未选项——明确记录"为什么不选")
+//   [ ] 未选(无 why_not 的未选项——只是"没选",无负面理由)
+//
+// 视觉与子节点(childs)区分:选项块前缀用 `··`(点线),不用 `├─/└─`,
+// 避免与 childs 的树形线混在一起分不清谁是选项谁是子问题。
+//
+// why/why_not/source 非空才显示续行,合并成一行避免空行噪音。
+// 续行缩进对齐选项 label 的起始列。
+//
+// 入参:
+//   node       节点对象
+//   indent     选项块的缩进前缀(等于父节点子层的 childPrefix)
+//   lines      渲染输出行数组(往里 push)
+// ────────────────────────────────────────────────────────────────
+function renderOptions(node, indent, lines) {
+  const opts = node.options || [];
+  if (opts.length === 0) return;
+
+  for (let i = 0; i < opts.length; i++) {
+    const opt = opts[i];
+    const label = opt.label || '(无标签)';
+    const notes = opt.notes || '';
+
+    // 三态判定
+    const isChosen = node.resolved_choice && opt.label === node.resolved_choice;
+    const hasWhyNot = opt.why_not && opt.why_not.trim();
+    const mark = isChosen ? '[x]' : hasWhyNot ? '[~]' : '[ ]';
+
+    // 主行:点线前缀 + checkbox + label + 描述(notes 非空时括注)
+    const desc = notes ? `（${notes}）` : '';
+    lines.push(`${indent}·· ${mark} ${label}${desc}`);
+
+    // 续行:why / why_not / source 合并,非空才显示
+    // 选中项显示 why(为什么选);排除项显示 why_not(为什么不选);source 两者都可挂
+    const rationale = isChosen ? opt.why || '' : hasWhyNot ? opt.why_not : '';
+    const source = opt.source || '';
+    const parts = [];
+    if (rationale) parts.push(`理由：${shorten(rationale, 60)}`);
+    if (source) parts.push(`来源：${shorten(source, 30)}`);
+    if (parts.length > 0) {
+      // 续行缩进对齐 label 起始列(indent + "·· [x] " 的宽度 = indent + 7 空格)
+      lines.push(`${indent}      ${parts.join(' · ')}`);
+    }
+  }
 }
 
 // show all:全树 DFS,完整展开
@@ -735,8 +791,13 @@ function renderSubtree(tree, id, prefix, isLast, currentId, lines, isNextEdge) {
     prefix + branch + edgeMark + renderNodeLine(symbol, id, node, id === currentId);
   lines.push(line);
 
-  // 子节点(childs)
+  // 选项块(节点的 options 字段)——先于子节点渲染,因 options 属节点自身属性,
+  // childs 是下钻的问题,逻辑上 options 更贴近节点本身。
+  // 缩进用 childPrefix(与子节点同级),视觉上用 ·· 前缀与 childs 的 ├─ 区分。
   const childPrefix = prefix + (isLast ? '    ' : '│   ');
+  renderOptions(node, childPrefix, lines);
+
+  // 子节点(childs)
   const childs = node.childs || [];
   for (let i = 0; i < childs.length; i++) {
     renderSubtree(tree, childs[i], childPrefix, i === childs.length - 1, currentId, lines, false);
@@ -838,8 +899,13 @@ function renderCurrent(tree) {
   // —— 2. 渲染当前节点(高亮 ●) ——
   lines.push(currentRenderIndent + renderNodeLine(statusSymbol(tree, currentId, currentId), currentId, cur, true));
 
-  // 当前节点的子节点展开一层
+  // 当前节点的子层缩进
   const childIndent = currentRenderIndent + '    ';
+
+  // 选项块(先于子节点,与 renderSubtree 顺序一致)
+  renderOptions(cur, childIndent, lines);
+
+  // 当前节点的子节点展开一层
   const childs = cur.childs || [];
   for (let i = 0; i < childs.length; i++) {
     const cid = childs[i];
